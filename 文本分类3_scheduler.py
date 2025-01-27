@@ -11,6 +11,7 @@ from tqdm import tqdm
 import random
 from torch.utils.tensorboard import SummaryWriter
 
+from transformers import get_cosine_schedule_with_warmup
 
 
 # tensorboard跟踪记录实现
@@ -20,6 +21,9 @@ from torch.utils.tensorboard import SummaryWriter
 #         value: loss，acc
 #         indexer: train_cnt，acc_cnt
 
+"""
+    动态学习率
+"""
 class SummaryWrapper:
     def __init__(self):
         self.writer = SummaryWriter(r"F:\VsConde-Python\chen\source\logs")
@@ -89,7 +93,11 @@ def train_test_split(X, y , split_rate=0.2):
     return X_train, X_test, y_train, y_test
 
 def train(model, loss_fn, optimizer, train_dl, test_dl, epoch, device):
-    
+
+    train_steps = len(train_dl) * epoch
+    scheduler = get_cosine_schedule_with_warmup(optimizer=optimizer, num_training_steps=train_steps, num_warmup_steps=100)
+
+
     print(device)
     for e in range(epoch):
         model.train()
@@ -99,7 +107,8 @@ def train(model, loss_fn, optimizer, train_dl, test_dl, epoch, device):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            process_bar.set_description(f"epoch: {e + 1}, loss: {loss.item():.4f}")
+            scheduler.step()
+            process_bar.set_description(f"epoch: {e + 1}, lr: {scheduler.get_last_lr()[0]}, loss: {loss.item():.4f}")
         
         model.eval()
         with torch.no_grad():

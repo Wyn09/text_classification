@@ -11,6 +11,7 @@ from tqdm import tqdm
 import random
 from torch.utils.tensorboard import SummaryWriter
 
+from transformers import get_cosine_schedule_with_warmup
 
 
 # tensorboard跟踪记录实现
@@ -19,6 +20,11 @@ from torch.utils.tensorboard import SummaryWriter
 #         title: train_loss,val_acc
 #         value: loss，acc
 #         indexer: train_cnt，acc_cnt
+
+"""
+    动态学习率
+    混合精度
+"""
 
 class SummaryWrapper:
     def __init__(self):
@@ -89,7 +95,12 @@ def train_test_split(X, y , split_rate=0.2):
     return X_train, X_test, y_train, y_test
 
 def train(model, loss_fn, optimizer, train_dl, test_dl, epoch, device):
-    
+
+    train_steps = len(train_dl) * epoch
+    scheduler = get_cosine_schedule_with_warmup(optimizer=optimizer, num_training_steps=train_steps, num_warmup_steps=100)
+
+    scaler = torch.amp.GradScaler(device=device)
+
     print(device)
     for e in range(epoch):
         model.train()
@@ -97,9 +108,11 @@ def train(model, loss_fn, optimizer, train_dl, test_dl, epoch, device):
         for tokens, lbl in process_bar:
             loss = train_step(model, tokens, lbl, loss_fn, device)
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            process_bar.set_description(f"epoch: {e + 1}, loss: {loss.item():.4f}")
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
+            process_bar.set_description(f"epoch: {e + 1}, lr: {scheduler.get_last_lr()[0]}, loss: {loss.item():.4f}")
         
         model.eval()
         with torch.no_grad():
@@ -113,7 +126,10 @@ def train(model, loss_fn, optimizer, train_dl, test_dl, epoch, device):
 @sw.train_loss
 def train_step(model, tokens, lbl, loss_fn, device):
     tokens, lbl = tokens.to(device), lbl.to(device)
-    y_hat = model(tokens)
+    # 混合精度前向计算
+    with torch.amp.autocast(device):
+        y_hat = model(tokens)
+
     loss = loss_fn(y_hat, lbl)
     return loss
 
